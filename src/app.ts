@@ -44,8 +44,7 @@ app.get('/', (_req: Request, res: Response) => {
     status: 'UP',
     environment: process.env.NODE_ENV || 'development',
     apiVersion: 'v1',
-    uptimeSeconds: Math.floor(process.uptime()),
-    timestamp: new Date().toISOString()
+    uptimeSeconds: Math.floor(process.uptime())
   });
 });
 
@@ -57,8 +56,7 @@ app.get('/health', async (_req: Request, res: Response) => {
     return ApiResponse.success(res, 'System operational and healthy', {
       status: 'UP',
       database: 'CONNECTED',
-      uptimeSeconds: Math.floor(process.uptime()),
-      timestamp: new Date().toISOString()
+      uptimeSeconds: Math.floor(process.uptime())
     });
   } catch (err) {
     return ApiResponse.error(
