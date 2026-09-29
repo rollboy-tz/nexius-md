@@ -68,10 +68,10 @@ async function startBot() {
     });
 
     if(!state.creds.registered) {
-        const phoneNumber = await askQuestion("👉 Andika namba yako ya WhatsApp (mfano: 2557XXXXXXX): ");
+        const phoneNumber = await askQuestion("👉 Enter your phone number (eg: 2557XXXXXXX): ");
         const code = await sock.requestPairingCode(phoneNumber);
-        console.log("📲 Pairing code yako ni:", code);
-        console.log("⚡ Nenda WhatsApp > Linked Devices > Link with phone number, kisha andika hii code.");
+        console.log("📲 Your pairing code is:", code);
+        console.log("⚡ Open WhatsApp > Linked Devices > Link with phone number, thei enter the pairing code.");
     }
 }
 

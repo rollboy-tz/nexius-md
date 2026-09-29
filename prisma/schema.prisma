@@ -1,0 +1,50 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SessionStatus {
+  DISCONNECTED
+  CONNECTING
+  CONNECTED
+  LOGGED_OUT
+}
+
+model Session {
+  id          String        @id @default(uuid())
+  sessionId   String        @unique
+  phoneNumber String?
+  status      SessionStatus @default(DISCONNECTED)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  messages    Message[]
+  logs        Log[]
+}
+
+model Message {
+  id          String   @id @default(uuid())
+  sessionId   String
+  messageId   String
+  fromJid     String
+  toJid       String
+  content     String?
+  fromMe      Boolean  @default(false)
+  timestamp   DateTime @default(now())
+
+  session     Session  @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
+}
+
+model Log {
+  id        String   @id @default(uuid())
+  sessionId String
+  level     String
+  message   String
+  timestamp DateTime @default(now())
+
+  session   Session  @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
+}

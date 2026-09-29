@@ -1,0 +1,60 @@
+@baseUrl = http://localhost:3000/api/v1
+@sessionId = tenant-test-01
+@phone = 255787885020
+
+### 1. Health Check Test
+GET http://localhost:3000/health
+Content-Type: application/json
+
+###
+
+### 2. Start WhatsApp Session (non-blocking — returns 202 immediately)
+POST {{baseUrl}}/sessions/start
+Content-Type: application/json
+
+{
+  "sessionId": "{{sessionId}}"
+}
+
+###
+
+### 3. Request WhatsApp Pairing Code
+# Run this right after #2 — if the socket from /start isn't ready yet,
+# this now waits for THAT same in-flight attempt instead of racing it.
+POST {{baseUrl}}/sessions/pair
+Content-Type: application/json
+
+{
+  "sessionId": "{{sessionId}}",
+  "phoneNumber": "{{phone}}"
+}
+
+###
+
+### 4. Get Session Status (Database & Memory Check)
+GET {{baseUrl}}/sessions/{{sessionId}}/status
+Content-Type: application/json
+
+###
+
+### 5. List All Registered Sessions
+GET {{baseUrl}}/sessions
+Content-Type: application/json
+
+###
+
+### 6. Send WhatsApp Text Message
+POST {{baseUrl}}/sessions/send-message
+Content-Type: application/json
+
+{
+  "sessionId": "{{sessionId}}",
+  "to": "255787885020",
+  "text": "Habari! Hii ni jaribio la ujumbe kutoka kwenye mfumo wa Nexius MD 🚀"
+}
+
+###
+
+### 7. Disconnect / Delete Session
+DELETE {{baseUrl}}/sessions/{{sessionId}}
+Content-Type: application/json

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="sw">
+<head>
+    <title>Rollboy SaaS Dashboard</title>
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <h1>Rollboy SaaS Dashboard</h1>
+
+    <!-- Live Logs Window -->
+    <h3>Real-time System Logs</h3>
+    <pre id="logs" style="background: #1e1e1e; color: #00ff00; padding: 10px; height: 150px; overflow-y: scroll;"></pre>
+
+    <!-- Live Message Preview Window -->
+    <h3>Live Chat Preview</h3>
+    <div id="chat-preview" style="border: 1px solid #ccc; padding: 10px; height: 200px; overflow-y: scroll;"></div>
+
+    <script>
+        const socket = io();
+
+        // 1. Kupokea Logs za Mfumo
+        socket.on("system_log", (data) => {
+            const logBox = document.getElementById("logs");
+            logBox.innerHTML += `[${data.timestamp}] [${data.sessionId}]: ${data.message}\n`;
+            logBox.scrollTop = logBox.scrollHeight;
+        });
+
+        // 2. Live Chat Preview
+        socket.on("live_message", (data) => {
+            const chatBox = document.getElementById("chat-preview");
+            chatBox.innerHTML += `<p><b>${data.fromMe ? 'Bot' : data.from}:</b> ${data.message}</p>`;
+            chatBox.scrollTop = chatBox.scrollHeight;
+        });
+    </script>
+</body>
+</html>

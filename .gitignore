@@ -1,6 +1,8 @@
 files/*.txt
 model/
 node_modules/
+sessions/*
+session/*
 
 .env
 eg.js

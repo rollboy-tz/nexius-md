@@ -14,11 +14,11 @@ console.log("Project version:", pkgData.version);
 const version = pkgData.version + ' Beta'; //This is beta version
 
 
-const prefixes = ['.', '$', '/', '%', '+', '>', '~', '&', '!', ','];
+const prefixes = ['.', '$', '/', '%', '+', '>', '~', '&', '!', ',', '-', '_'];
 export default {
     //premiun number
     ownerNumber : "255787885020",
-    botNumber: "255628606274",
+    botNumber: "255666961869",
     version: version,
     defaultSettings: {
         muteMode: false, //Mute mode default is off mob activated not muted
