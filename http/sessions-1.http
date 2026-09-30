@@ -13,7 +13,7 @@ POST {{baseUrl}}/sessions/start
 Content-Type: application/json
 
 {
-  "sessionId": "{{sessionId}}"
+  "sessionId": "user-session-1"
 }
 
 ###
