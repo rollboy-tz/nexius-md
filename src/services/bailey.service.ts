@@ -71,6 +71,16 @@ export interface PairingCodeOptions {
   timeoutMs?: number;
 }
 
+export type SessionLogLevel = 'info' | 'warn' | 'error' | 'debug' | 'status' | 'terminal';
+
+export interface SessionLogEntry {
+  sessionId: string;
+  level: SessionLogLevel;
+  message: string;
+  meta?: unknown;
+  timestamp: string;
+}
+
 interface ManagedSession {
   sessionId: string;
   sessionDir: string;
@@ -104,12 +114,57 @@ const INITIAL_EVENT_TIMEOUT_MS = 5_000;
 const SESSION_ID_PATTERN = /^[a-zA-Z0-9_-]{1,100}$/;
 const PHONE_NUMBER_PATTERN = /^\d{8,15}$/;
 
+const LOG_BUFFER_LIMIT = 200;
+const LOG_BUFFER_CLEAR_DELAY_MS = 5_000;
+
 /* ============================================================================
  * Session stores
  * ========================================================================== */
 
 const sessionRegistry = new Map<string, ManagedSession>();
 const pendingConnections = new Map<string, Promise<WASocket>>();
+const sessionLogBuffer = new Map<string, SessionLogEntry[]>();
+
+/* ============================================================================
+ * Session log streaming (terminal -> frontend)
+ * ========================================================================== */
+
+function emitSessionLog(sessionId: string, level: SessionLogLevel, message: string, meta?: unknown): void {
+  try {
+    const entry: SessionLogEntry = {
+      sessionId,
+      level,
+      message,
+      ...(meta !== undefined ? { meta } : {}),
+      timestamp: new Date().toISOString(),
+    };
+
+    // Keep recent logs so a frontend that joins late can still receive them.
+    const buffer = sessionLogBuffer.get(sessionId) ?? [];
+    buffer.push(entry);
+    if (buffer.length > LOG_BUFFER_LIMIT) buffer.shift();
+    sessionLogBuffer.set(sessionId, buffer);
+
+    io.to(sessionId).emit('session_log', entry);
+  } catch {
+    // Log streaming must never break connection logic.
+  }
+}
+
+export function getSessionLogs(sessionId: string): SessionLogEntry[] {
+  return sessionLogBuffer.get(sessionId) ?? [];
+}
+
+export function clearSessionLogs(sessionId: string): void {
+  sessionLogBuffer.delete(sessionId);
+}
+
+function scheduleLogBufferClear(sessionId: string): void {
+  setTimeout(() => {
+    // Do not wipe logs if the session was started again in the meantime.
+    if (!sessionRegistry.has(sessionId)) clearSessionLogs(sessionId);
+  }, LOG_BUFFER_CLEAR_DELAY_MS);
+}
 
 /* ============================================================================
  * Logger
@@ -119,25 +174,33 @@ const isDevelopment = process.env.NODE_ENV === 'development' || process.env.NODE
 
 const logger = P({ level: isDevelopment ? 'info' : 'info' });
 
-function logInfo(message: string, meta?: unknown): void {
+function logInfo(message: string, meta?: unknown, sessionId?: string): void {
   if (meta !== undefined) logger.info(meta, message);
   else logger.info(message);
+
+  if (sessionId) emitSessionLog(sessionId, 'info', message, meta);
 }
 
-function logWarn(message: string, meta?: unknown): void {
+function logWarn(message: string, meta?: unknown, sessionId?: string): void {
   if (meta !== undefined) logger.warn(meta, message);
   else logger.warn(message);
+
+  if (sessionId) emitSessionLog(sessionId, 'warn', message, meta);
 }
 
-function logError(message: string, meta?: unknown): void {
+function logError(message: string, meta?: unknown, sessionId?: string): void {
   if (meta !== undefined) logger.error(meta, message);
   else logger.error(message);
+
+  if (sessionId) emitSessionLog(sessionId, 'error', message, meta);
 }
 
-function logDebug(message: string, meta?: unknown): void {
+function logDebug(message: string, meta?: unknown, sessionId?: string): void {
   if (!isDevelopment) return;
   if (meta !== undefined) logger.debug(meta, message);
   else logger.debug(message);
+
+  if (sessionId) emitSessionLog(sessionId, 'debug', message, meta);
 }
 
 /* ============================================================================
@@ -145,18 +208,32 @@ function logDebug(message: string, meta?: unknown): void {
  * ========================================================================== */
 
 function printSessionHeader(sessionId: string, phoneNumber: string | null): void {
-  console.log('');
-  console.log('╭──────────────────────────────────────────────╮');
-  console.log('│ WhatsApp Session                             │');
-  console.log('├──────────────────────────────────────────────┤');
-  console.log(`│ Session : ${sessionId.padEnd(33)}│`);
-  console.log(`│ Phone   : ${(phoneNumber ?? '-').padEnd(33)}│`);
-  console.log('╰──────────────────────────────────────────────╯');
+  const lines = [
+    '',
+    '╭──────────────────────────────────────────────╮',
+    '│ WhatsApp Session                             │',
+    '├──────────────────────────────────────────────┤',
+    `│ Session : ${sessionId.padEnd(33)}│`,
+    `│ Phone   : ${(phoneNumber ?? '-').padEnd(33)}│`,
+    '╰──────────────────────────────────────────────╯',
+  ];
+
+  for (const line of lines) console.log(line);
+
+  emitSessionLog(sessionId, 'terminal', lines.join('\n'), { sessionId, phoneNumber });
 }
 
 function terminalStatus(session: ManagedSession, status: string, detail?: string): void {
   const suffix = detail ? ` — ${detail}` : '';
-  console.log(`[WA] ${session.sessionId} │ ${status}${suffix}`);
+  const line = `[WA] ${session.sessionId} │ ${status}${suffix}`;
+
+  console.log(line);
+
+  emitSessionLog(session.sessionId, 'status', `${status}${suffix}`, {
+    status,
+    detail: detail ?? null,
+    line,
+  });
 }
 
 /* ============================================================================
@@ -456,11 +533,15 @@ function getSessionDirectory(sessionId: string): string {
   return path.join(env.SESSION_STORE_PATH, sessionId);
 }
 
-async function removeSessionDirectory(sessionDir: string): Promise<void> {
+async function removeSessionDirectory(sessionDir: string, sessionId?: string): Promise<void> {
   try {
     await fs.rm(sessionDir, { recursive: true, force: true });
   } catch (error) {
-    logWarn('Failed to remove WhatsApp session directory.', { sessionDir, error: getErrorMessage(error) });
+    logWarn(
+      'Failed to remove WhatsApp session directory.',
+      { sessionDir, error: getErrorMessage(error) },
+      sessionId,
+    );
   }
 }
 
@@ -494,7 +575,11 @@ async function createSocket(session: ManagedSession): Promise<WASocket> {
     try {
       await saveCreds();
     } catch (error) {
-      logError(`Failed to save credentials for ${session.sessionId}.`, { error: getErrorMessage(error) });
+      logError(
+        `Failed to save credentials for ${session.sessionId}.`,
+        { error: getErrorMessage(error) },
+        session.sessionId,
+      );
     }
   });
 
@@ -502,7 +587,11 @@ async function createSocket(session: ManagedSession): Promise<WASocket> {
     try {
       await handleConnectionUpdate(session, sock, generation, update);
     } catch (error) {
-      logError(`Unhandled connection.update error for ${session.sessionId}.`, { error: getErrorMessage(error) });
+      logError(
+        `Unhandled connection.update error for ${session.sessionId}.`,
+        { error: getErrorMessage(error) },
+        session.sessionId,
+      );
     }
   });
 
@@ -522,7 +611,7 @@ async function handleConnectionUpdate(
   update: Partial<ConnectionState>,
 ): Promise<void> {
   if (session.generation !== generation || session.socket !== sock) {
-    logDebug(`Ignoring obsolete socket event for ${session.sessionId}.`);
+    logDebug(`Ignoring obsolete socket event for ${session.sessionId}.`, undefined, session.sessionId);
     safelyDestroySocket(sock);
     return;
   }
@@ -582,13 +671,17 @@ async function handleConnectionUpdate(
 
   terminalStatus(session, 'SOCKET_CLOSED', statusText);
 
-  logDebug(`WhatsApp socket closed for ${session.sessionId}.`, {
-    statusCode: evaluation.statusCode,
-    reason: evaluation.reason,
-    message: diagnostics.message,
-    registered: sock.authState.creds.registered,
-    pairingInProgress: session.pairingInProgress,
-  });
+  logDebug(
+    `WhatsApp socket closed for ${session.sessionId}.`,
+    {
+      statusCode: evaluation.statusCode,
+      reason: evaluation.reason,
+      message: diagnostics.message,
+      registered: sock.authState.creds.registered,
+      pairingInProgress: session.pairingInProgress,
+    },
+    session.sessionId,
+  );
 
   rejectInitializationGate(
     session,
@@ -623,7 +716,9 @@ async function handleConnectionUpdate(
     sessionRegistry.delete(session.sessionId);
 
     await sleep(300);
-    await removeSessionDirectory(session.sessionDir);
+    await removeSessionDirectory(session.sessionDir, session.sessionId);
+
+    scheduleLogBufferClear(session.sessionId);
 
     return;
   }
@@ -726,7 +821,11 @@ function scheduleReconnect(session: ManagedSession): void {
     if (session.stopping || session.pairingInProgress) return;
 
     void establishConnection(session.sessionId, { phoneNumber: session.phoneNumber }).catch((error) => {
-      logError(`Internal reconnect failed for ${session.sessionId}.`, { error: getErrorMessage(error) });
+      logError(
+        `Internal reconnect failed for ${session.sessionId}.`,
+        { error: getErrorMessage(error) },
+        session.sessionId,
+      );
 
       if (!session.stopping && !session.pairingInProgress) {
         scheduleReconnect(session);
@@ -1070,6 +1169,8 @@ export async function stopConnection(sessionId: string): Promise<void> {
   });
 
   terminalStatus(session, 'STOPPED', 'manual stop');
+
+  scheduleLogBufferClear(sessionId);
 }
 
 /* ============================================================================

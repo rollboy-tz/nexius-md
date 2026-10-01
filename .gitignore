@@ -3,6 +3,7 @@ model/
 node_modules/
 sessions/*
 session/*
+dist/*
 
 .env
 eg.js
