@@ -38,7 +38,7 @@ export class SessionController {
    *
    * @route POST /api/v1/sessions/start
    */
-  public startSession = catchAsync(async (req: Request, res: Response) => {
+  public initiateSession = catchAsync(async (req: Request, res: Response) => {
     const { sessionId, phoneNumber } = req.body as { sessionId?: string; phoneNumber?: string };
 
     if (!sessionId) {

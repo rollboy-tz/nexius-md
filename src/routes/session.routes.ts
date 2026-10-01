@@ -10,7 +10,7 @@ import { sessionSchema } from '../schemas/session.schema.js';
 const router = Router();
 
 /**
- * @route   POST /api/v1/sessions/start
+ * @route   POST /api/v1/sessions/initiate
  * @desc    Begin establishing a WhatsApp socket for a session. Returns
  *          immediately (202) without waiting for the socket to connect —
  *          call this first, then either GET /:sessionId/status or listen
@@ -20,9 +20,9 @@ const router = Router();
  * @access  Protected / Internal API
  */
 router.post(
-  '/start',
-  validateRequest(sessionSchema.startSession),
-  sessionController.startSession
+  '/initiate',
+  validateRequest(sessionSchema.initiateSession),
+  sessionController.initiateSession
 );
 
 /**

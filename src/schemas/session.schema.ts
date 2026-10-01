@@ -51,7 +51,7 @@ export const sessionSchema = {
    *
    * @route POST /api/v1/sessions/start
    */
-  startSession: z.object({
+  initiateSession: z.object({
     body: z
       .object({
         sessionId,
@@ -111,7 +111,7 @@ export const sessionSchema = {
 } as const;
 
 /** Inferred TypeScript types from sessionSchema definitions */
-export type StartSessionInput = z.infer<typeof sessionSchema.startSession>;
+export type initiateSessionInput = z.infer<typeof sessionSchema.initiateSession>;
 export type RequestPairingInput = z.infer<typeof sessionSchema.requestPairing>;
 export type SessionParamInput = z.infer<typeof sessionSchema.sessionParam>;
 export type SendMessageInput = z.infer<typeof sessionSchema.sendMessage>;

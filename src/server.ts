@@ -19,10 +19,19 @@ export const io = new SocketIOServer(httpServer, {
 io.on('connection', (socket) => {
   console.log(`🔌 [Socket.IO] Client connected: ${socket.id}`);
 
+  // Join Room
   socket.on('join_session', (sessionId: string) => {
     if (typeof sessionId === 'string' && sessionId.trim() !== '') {
       socket.join(sessionId);
       console.log(`📌 [Socket.IO] Client ${socket.id} joined room: ${sessionId}`);
+    }
+  });
+
+  // Leave Room (Ongeza hii)
+  socket.on('leave_session', (sessionId: string) => {
+    if (typeof sessionId === 'string' && sessionId.trim() !== '') {
+      socket.leave(sessionId);
+      console.log(`🚪 [Socket.IO] Client ${socket.id} left room: ${sessionId}`);
     }
   });
 
