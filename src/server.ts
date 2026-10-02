@@ -22,20 +22,28 @@ import {
 const httpServer = http.createServer(app);
 
 // CORS_ORIGIN can be a single origin or a comma separated list. '*' only as a dev fallback.
-const allowedOrigins = (process.env.CORS_ORIGIN ?? '*')
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+const isWildcardAllowed = env.CORS_ORIGIN.includes('*');
 
 export const io = new SocketIOServer(httpServer, {
   path: '/socket.io',
   serveClient: false,
   allowEIO3: true, // for socket.io-client v2.x
-  transports: ['websocket', 'polling'],
+  transports: ['polling', 'websocket'],
   // https://socket.io/docs/v4/handling-cors/
   cors: {
-    origin: allowedOrigins.includes('*') ? '*' : allowedOrigins,
+    origin: (requestOrigin, callback) => {
+      if (!requestOrigin || isWildcardAllowed) {
+        return callback(null, true);
+      }
+
+      if (env.CORS_ORIGIN.includes(requestOrigin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error('CORS policy error: Origin not allowed'));
+    },
     methods: ['GET', 'POST'],
+    credentials: true,
   },
   pingInterval: 20_000,
   pingTimeout: 20_000,
