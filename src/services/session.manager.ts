@@ -148,7 +148,7 @@ export class SessionManager {
 
     if (this.pairingInFlight.has(sessionId)) {
       throw new ApiError(
-        StatusCodes.NOT_FOUND,
+        StatusCodes.CONFLICT,
         `A pairing code request is already in progress for session '${sessionId}'.`,
         'PAIRING_ALREADY_IN_PROGRESS',
       );
@@ -162,7 +162,7 @@ export class SessionManager {
       // Ensure a socket exists. requestPairingCodeSafely() also creates one
       // itself if missing (and shares the same pendingConnections guard as
       // establishConnection), so this call is a fast no-op in the common
-      // case where /start already created it.
+      // case where initiate already created it.
       await this.getOrCreateSession(sessionId, cleanPhone);
 
       const pairingCode = await requestPairingCodeSafely(sessionId, {

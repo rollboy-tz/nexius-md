@@ -146,7 +146,7 @@ export default function startGroupHandler(sock) {
             const hasPreffix = preFixes.some(prefix => sentMsg.trim().startsWith(prefix));
             const antBot = groupSettings.antPreffixBot || settings.defaultSettings.antPreffixBot;
 
-            //Start condition checking...
+            /initiate condition checking...
             if(antBot && hasPreffix) {
                 const msgId = msg.key.id;
                 if(!trackedMessage.has(groupId)) trackedMessage.set(groupId, new Set());

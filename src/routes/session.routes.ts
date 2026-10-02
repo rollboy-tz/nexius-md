@@ -15,7 +15,7 @@ const router = Router();
  *          immediately (202) without waiting for the socket to connect —
  *          call this first, then either GET /:sessionId/status or listen
  *          for the 'session_status' Socket.IO event, then call /pair once
- *          ready (or just call /pair directly; it will wait for /start's
+ *          ready (or just call /pair directly; it will wait for initiate's
  *          in-flight connection instead of racing it).
  * @access  Protected / Internal API
  */
@@ -29,7 +29,7 @@ router.post(
  * @route   POST /api/v1/sessions/pair
  * @desc    Request a WhatsApp Pairing Code for authenticating a new or existing session.
  *          Blocks up to the service's internal deadline (~30s) while it
- *          retries transient WhatsApp errors — call /start first if you
+ *          retries transient WhatsApp errors — call initiate first if you
  *          want the socket creation cost paid outside of this request.
  * @access  Protected / Internal API
  */

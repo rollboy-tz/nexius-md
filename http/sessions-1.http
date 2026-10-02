@@ -9,7 +9,7 @@ Content-Type: application/json
 ###
 
 ### 2. Start WhatsApp Session (non-blocking — returns 202 immediately)
-POST {{baseUrl}}/sessions/start
+POST {{baseUrl}}/sessionsinitiate
 Content-Type: application/json
 
 {
@@ -19,7 +19,7 @@ Content-Type: application/json
 ###
 
 ### 3. Request WhatsApp Pairing Code
-# Run this right after #2 — if the socket from /start isn't ready yet,
+# Run this right after #2 — if the socket from initiate isn't ready yet,
 # this now waits for THAT same in-flight attempt instead of racing it.
 POST {{baseUrl}}/sessions/pair
 Content-Type: application/json

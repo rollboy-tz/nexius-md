@@ -43,13 +43,13 @@ export const sessionSchema = {
   },
 
   /**
-   * Validates the /start request payload. phoneNumber is OPTIONAL here,
-   * unlike requestPairing — /start's job is just to bring the socket up;
+   * Validates the initiate request payload. phoneNumber is OPTIONAL here,
+   * unlike requestPairing — initiate's job is just to bring the socket up;
    * the phone number only matters once /pair actually requests a code.
    * Passing it here too is harmless (it gets stored on the session early),
    * so it's accepted but never required.
    *
-   * @route POST /api/v1/sessions/start
+   * @route POST /api/v1/sessionsinitiate
    */
   initiateSession: z.object({
     body: z

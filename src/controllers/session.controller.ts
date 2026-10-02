@@ -36,7 +36,7 @@ export class SessionController {
    * progress via the 'session_status' Socket.IO event, or poll
    * GET /:sessionId/status.
    *
-   * @route POST /api/v1/sessions/start
+   * @route POST /api/v1/sessionsinitiate
    */
   public initiateSession = catchAsync(async (req: Request, res: Response) => {
     const { sessionId, phoneNumber } = req.body as { sessionId?: string; phoneNumber?: string };
@@ -68,11 +68,11 @@ export class SessionController {
 
   /**
    * Requests a WhatsApp pairing code for a session that has already been
-   * started via /start. This call is allowed to block — up to the internal
+   * started via initiate. This call is allowed to block — up to the internal
    * 30s deadline inside requestPairingCodeSafely() — because the pairing
    * code itself is the thing the caller actually needs back. It no longer
    * also pays the cost of first-time socket creation on top of that
-   * deadline, since /start already began that separately.
+   * deadline, since initiate already began that separately.
    *
    * @route POST /api/v1/sessions/pair
    */

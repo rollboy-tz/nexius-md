@@ -14,6 +14,19 @@ import path from 'node:path';
 import { env } from '../config/env.js';
 import { io } from '../server.js';
 
+import {
+  clearSessionLogs,
+  createBaileysLogger,
+  emitSessionLog,
+  getSessionLogs,
+  type SessionLogEntry,
+  type SessionLogLevel,
+} from './session-log.service.js';
+
+// Zinabaki kupatikana kutoka bailey.service kwa code nyingine inayozitumia.
+export { clearSessionLogs, getSessionLogs };
+export type { SessionLogEntry, SessionLogLevel };
+
 /* ============================================================================
  * Types
  * ========================================================================== */
@@ -71,16 +84,6 @@ export interface PairingCodeOptions {
   timeoutMs?: number;
 }
 
-export type SessionLogLevel = 'info' | 'warn' | 'error' | 'debug' | 'status' | 'terminal';
-
-export interface SessionLogEntry {
-  sessionId: string;
-  level: SessionLogLevel;
-  message: string;
-  meta?: unknown;
-  timestamp: string;
-}
-
 interface ManagedSession {
   sessionId: string;
   sessionDir: string;
@@ -114,7 +117,6 @@ const INITIAL_EVENT_TIMEOUT_MS = 5_000;
 const SESSION_ID_PATTERN = /^[a-zA-Z0-9_-]{1,100}$/;
 const PHONE_NUMBER_PATTERN = /^\d{8,15}$/;
 
-const LOG_BUFFER_LIMIT = 200;
 const LOG_BUFFER_CLEAR_DELAY_MS = 5_000;
 
 /* ============================================================================
@@ -123,41 +125,10 @@ const LOG_BUFFER_CLEAR_DELAY_MS = 5_000;
 
 const sessionRegistry = new Map<string, ManagedSession>();
 const pendingConnections = new Map<string, Promise<WASocket>>();
-const sessionLogBuffer = new Map<string, SessionLogEntry[]>();
 
 /* ============================================================================
  * Session log streaming (terminal -> frontend)
  * ========================================================================== */
-
-function emitSessionLog(sessionId: string, level: SessionLogLevel, message: string, meta?: unknown): void {
-  try {
-    const entry: SessionLogEntry = {
-      sessionId,
-      level,
-      message,
-      ...(meta !== undefined ? { meta } : {}),
-      timestamp: new Date().toISOString(),
-    };
-
-    // Keep recent logs so a frontend that joins late can still receive them.
-    const buffer = sessionLogBuffer.get(sessionId) ?? [];
-    buffer.push(entry);
-    if (buffer.length > LOG_BUFFER_LIMIT) buffer.shift();
-    sessionLogBuffer.set(sessionId, buffer);
-
-    io.to(sessionId).emit('session_log', entry);
-  } catch {
-    // Log streaming must never break connection logic.
-  }
-}
-
-export function getSessionLogs(sessionId: string): SessionLogEntry[] {
-  return sessionLogBuffer.get(sessionId) ?? [];
-}
-
-export function clearSessionLogs(sessionId: string): void {
-  sessionLogBuffer.delete(sessionId);
-}
 
 function scheduleLogBufferClear(sessionId: string): void {
   setTimeout(() => {
@@ -172,7 +143,7 @@ function scheduleLogBufferClear(sessionId: string): void {
 
 const isDevelopment = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'dev';
 
-const logger = P({ level: isDevelopment ? 'info' : 'info' });
+const logger = P({ level: isDevelopment ? 'debug' : 'info' });
 
 function logInfo(message: string, meta?: unknown, sessionId?: string): void {
   if (meta !== undefined) logger.info(meta, message);
@@ -196,9 +167,10 @@ function logError(message: string, meta?: unknown, sessionId?: string): void {
 }
 
 function logDebug(message: string, meta?: unknown, sessionId?: string): void {
-  if (!isDevelopment) return;
-  if (meta !== undefined) logger.debug(meta, message);
-  else logger.debug(message);
+  if (isDevelopment) {
+    if (meta !== undefined) logger.debug(meta, message);
+    else logger.debug(message);
+  }
 
   if (sessionId) emitSessionLog(sessionId, 'debug', message, meta);
 }
@@ -555,11 +527,14 @@ async function createSocket(session: ManagedSession): Promise<WASocket> {
   const { state, saveCreds } = await useMultiFileAuthState(session.sessionDir);
   const { version } = await fetchLatestBaileysVersion();
 
+  const baileysLogLevel = (process.env.BAILEYS_LOG_LEVEL ?? 'warn') as
+    'trace' | 'debug' | 'info' | 'warn' | 'error' | 'silent';
+
   const config: UserFacingSocketConfig = {
     version,
     auth: state,
     printQRInTerminal: false,
-    logger: P({ level: 'silent' }),
+    logger: createBaileysLogger(session.sessionId, baileysLogLevel),
   };
 
   const sock = makeWASocket(config);
@@ -975,16 +950,16 @@ export async function requestPairingCodeSafely(sessionId: string, options: Pairi
       let sock = session.socket;
 
       if (!sock) {
-        // Kama /start (establishConnection) bado iko njiani kuunda socket
+        // Kama initiate (establishConnection) bado iko njiani kuunda socket
         // yake, tumia MATOKEO YAKE badala ya kuunda socket ya pili
         // inayogombania auth directory moja. Bila hili, /pair ikifika
-        // haraka sana baada ya /start, tunapata race condition ile ile
+        // haraka sana baada ya initiate, tunapata race condition ile ile
         // tuliyoirekebisha kwenye establishConnection — lakini kupitia
         // njia hii tofauti ambayo haitumii pendingConnections.
         const inFlight = pendingConnections.get(session.sessionId);
 
         if (inFlight) {
-          terminalStatus(session, 'WAITING', 'joining in-flight connection attempt from /start');
+          terminalStatus(session, 'WAITING', 'joining in-flight connection attempt from initiate');
 
           try {
             sock = await inFlight;
