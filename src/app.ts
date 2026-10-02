@@ -9,17 +9,29 @@ import { ApiResponse } from './utils/api-response.util.js';
 import { ApiError } from './utils/api.error.js';
 import { globalErrorHandler } from './middlewares/error.middleware.js';
 import v1Router from './routes/v1.routes.js';
+import { env } from './config/env.js';
 
 const app: Application = express();
 
 // --- 1. ENTERPRISE SECURITY & BASIC MIDDLEWARES ---
 app.use(helmet());
 app.set('trust proxy', 1);
-app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*',
-  credentials: true
-}));
+const isWildcardAllowed = env.CORS_ORIGIN.includes('*');
 
+const corsOptions: cors.CorsOptions = {
+  origin: (requestOrigin, callback) => {
+    if (!requestOrigin || isWildcardAllowed || env.CORS_ORIGIN.includes(requestOrigin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('CORS policy error: Origin not allowed'));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
+};
+
+
+app.use(cors(corsOptions));
 app.use(compression());
 
 app.use(express.json({ limit: '10mb' }));
