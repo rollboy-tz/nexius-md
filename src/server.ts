@@ -28,6 +28,11 @@ const allowedOrigins = (process.env.CORS_ORIGIN ?? '*')
   .filter(Boolean);
 
 export const io = new SocketIOServer(httpServer, {
+  path: '/socket.io',
+  serveClient: false,
+  allowEIO3: true, // for socket.io-client v2.x
+  transports: ['websocket', 'polling'],
+  // https://socket.io/docs/v4/handling-cors/
   cors: {
     origin: allowedOrigins.includes('*') ? '*' : allowedOrigins,
     methods: ['GET', 'POST'],
