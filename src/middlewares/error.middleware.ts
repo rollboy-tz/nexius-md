@@ -1,5 +1,7 @@
+// path: src/middlewares/error.middleware.ts
+
 import type { Request, Response, NextFunction, ErrorRequestHandler } from 'express';
-import { Prisma } from '@prisma/client';
+import { DrizzleError } from 'drizzle-orm';
 import { ZodError } from 'zod';
 import type { Boom } from '@hapi/boom';
 import { ApiError } from '../utils/api.error.js';
@@ -8,34 +10,45 @@ import { ApiResponse } from '../utils/api-response.util.js';
 import { env } from '../config/env.js';
 
 /**
- * Representational structure for formatted stack frame elements.
+ * Structured trace elements representing clean stack frame locations.
  */
 export interface FormattedStackFrame {
-  /** Method or function identifier executing when exception occurred */
+  /** Executing function or method identifier */
   readonly method: string;
-  /** Relative or absolute file path reference */
+  /** File path relative to process working directory */
   readonly file: string;
-  /** Exact line and column location within source file */
+  /** Exact line and column reference */
   readonly line: string;
 }
 
 /**
- * Interface representing structured error field details from validation failures.
+ * Standardized response envelope detailing validation failure parameters.
  */
 export interface ValidationErrorDetail {
-  /** Targeted path or property key failing validation */
+  /** Target schema field path causing the validation error */
   readonly field: string;
-  /** Human readable explanation of validation requirement */
+  /** Human-readable failure explanation */
   readonly message: string;
-  /** Internal error rule or code */
+  /** Internal Zod validation rule code identifier */
   readonly rule: string;
 }
 
 /**
- * Parses and formats raw error stack trace string into structured debug object array.
+ * Interface representing native driver database error object structures.
+ */
+interface DatabaseDriverError extends Error {
+  code?: string;
+  detail?: string;
+  constraint?: string;
+  table?: string;
+  column?: string;
+}
+
+/**
+ * Converts raw error stack traces into structured objects for clean dev debugging.
  *
  * @param stack - Raw Error stack trace string
- * @returns Array of structured {@link FormattedStackFrame} items
+ * @returns Array of max 10 parsed {@link FormattedStackFrame} items
  */
 function parseStackTrace(stack?: string): FormattedStackFrame[] {
   if (!stack) return [];
@@ -63,24 +76,27 @@ function parseStackTrace(stack?: string): FormattedStackFrame[] {
 }
 
 /**
- * Redacts confidential properties, secrets, and connection credentials from debug output.
+ * Deeply redacts sensitive keys, tokens, and authorization credentials from error details.
  *
- * @param data - Target payload intended for sanitization
- * @returns Deeply sanitized clone of input object
+ * @param data - Target payload intended for logging or response dispatch
+ * @returns Deeply sanitized clone of input data
  */
 function sanitizeSensitiveData(data: unknown): unknown {
   if (!data || typeof data !== 'object') return data;
 
   const SENSITIVE_KEYS = [
     'password',
+    'pass',
     'token',
     'authorization',
     'secret',
     'apikey',
+    'key',
     'cookie',
     'session',
     'db_url',
-    'database_url'
+    'database_url',
+    'jwt'
   ];
 
   if (Array.isArray(data)) {
@@ -107,11 +123,11 @@ function sanitizeSensitiveData(data: unknown): unknown {
 }
 
 /**
- * Logs exception execution metadata cleanly to terminal output.
+ * Logs exception execution metadata cleanly to console streams.
  *
- * @param err - Exception instance captured
- * @param req - Express Request instance
- * @param errorCode - Application specific tracking code
+ * @param err - Captured Exception instance
+ * @param req - Incoming Express Request instance
+ * @param errorCode - System tracking error identifier
  * @param statusCode - Resolved HTTP Status Code
  */
 function logErrorDetails(
@@ -139,27 +155,29 @@ function logErrorDetails(
 }
 
 /**
- * Safely resolves unknown numerical HTTP status code into a valid type-safe {@link HttpStatusCode}.
+ * Resolves numerical status code candidates into standard {@link HttpStatusCode}.
  *
- * @param code - Raw numeric status code candidate
- * @param fallback - Default status code if input doesn't match standard HTTP specs
- * @returns Strict {@link HttpStatusCode} enum value
+ * @param code - Numeric HTTP code candidate
+ * @param fallback - Default status code fallback
+ * @returns Strict {@link HttpStatusCode} enum
  */
-function resolveHttpStatusCode(code?: number, fallback: HttpStatusCode = StatusCodes.INTERNAL_SERVER_ERROR): HttpStatusCode {
+function resolveHttpStatusCode(
+  code?: number,
+  fallback: HttpStatusCode = StatusCodes.INTERNAL_SERVER_ERROR
+): HttpStatusCode {
   if (!code) return fallback;
   const validCodes = Object.values(StatusCodes) as number[];
   return validCodes.includes(code) ? (code as HttpStatusCode) : fallback;
 }
 
 /**
- * Enterprise Global Error Handling Middleware.
- * Intercepts all thrown exceptions, normalizes validation, database, and socket errors,
- * enforces strict type-safety, and dispatches uniform JSON API error envelopes.
+ * Enterprise Production Global Error Handling Middleware for Express & Drizzle ORM.
+ * Catches, normalizes, sanitizes, and dispatches uniform JSON API error envelopes.
  *
  * @param err - Thrown error or exception payload
- * @param req - Incoming Express Request object
- * @param res - Outgoing Express Response object
- * @param _next - Express Next Function reference
+ * @param req - Express Request instance
+ * @param res - Express Response instance
+ * @param _next - Express NextFunction reference
  */
 export const globalErrorHandler: ErrorRequestHandler = (
   err: Error,
@@ -173,7 +191,7 @@ export const globalErrorHandler: ErrorRequestHandler = (
   let details: unknown = null;
 
   // -------------------------------------------------------------------
-  // 1. Domain Application ApiErrors
+  // 1. Domain Application Custom ApiErrors
   // -------------------------------------------------------------------
   if (err instanceof ApiError) {
     statusCode = err.statusCode;
@@ -183,15 +201,15 @@ export const globalErrorHandler: ErrorRequestHandler = (
   }
 
   // -------------------------------------------------------------------
-  // 2. Zod Validation Errors
+  // 2. Zod Payload Validation Failures
   // -------------------------------------------------------------------
   else if (err instanceof ZodError) {
     statusCode = StatusCodes.UNPROCESSABLE_ENTITY;
     errorCode = 'VALIDATION_ERROR';
     message = 'Input payload validation failed';
-    
+
     const validationDetails: ValidationErrorDetail[] = err.issues.map((issue) => ({
-      field: issue.path.join('.'),
+      field: issue.path.join('.').replace(/^(body|query|params)\./, ''),
       message: issue.message,
       rule: issue.code
     }));
@@ -200,91 +218,93 @@ export const globalErrorHandler: ErrorRequestHandler = (
   }
 
   // -------------------------------------------------------------------
-  // 3. Prisma Database ORM Errors
+  // 3. PostgreSQL Database Engine & Drizzle ORM Errors
   // -------------------------------------------------------------------
-  else if (err instanceof Prisma.PrismaClientKnownRequestError) {
-    switch (err.code) {
-      case 'P2002': {
-        const targetFields = (err.meta?.target as string[]) || ['field'];
+  else if (err instanceof DrizzleError || 'code' in err) {
+    const dbErr = err as DatabaseDriverError;
+
+    switch (dbErr.code) {
+      // Postgres Unique Violation (e.g. Duplicate Email / Unique Index)
+      case '23505': {
         statusCode = StatusCodes.CONFLICT;
-        errorCode = 'DUPLICATE_ENTRY';
-        message = `A record with this ${targetFields.join(', ')} already exists.`;
-        details = { duplicateFields: targetFields };
+        errorCode = 'DUPLICATE_RECORD';
+        message = 'A record with matching unique fields already exists.';
+        if (dbErr.detail) {
+          details = { hint: dbErr.detail };
+        }
         break;
       }
-      case 'P2025': {
-        statusCode = StatusCodes.NOT_FOUND;
-        errorCode = 'RECORD_NOT_FOUND';
-        message = 'The requested database record was not found or was already deleted.';
-        break;
-      }
-      case 'P2003': {
+
+      // Postgres Foreign Key Violation
+      case '23503': {
         statusCode = StatusCodes.BAD_REQUEST;
         errorCode = 'FOREIGN_KEY_CONSTRAINT_FAILED';
-        message = 'Invalid reference identifier provided for related database resource.';
+        message = 'Referenced relational record does not exist or has active constraints.';
         break;
       }
+
+      // Postgres Not Null Violation
+      case '23502': {
+        statusCode = StatusCodes.BAD_REQUEST;
+        errorCode = 'MISSING_REQUIRED_FIELD';
+        message = `Required database field '${dbErr.column || 'unknown'}' cannot be null.`;
+        break;
+      }
+
+      // Postgres Invalid Text Representation (e.g. Malformed UUID strings)
+      case '22P02': {
+        statusCode = StatusCodes.BAD_REQUEST;
+        errorCode = 'INVALID_INPUT_FORMAT';
+        message = 'Invalid format supplied for query database parameters (e.g., malformed UUID).';
+        break;
+      }
+
+      // Postgres Database Connection / Authentication Failure
+      case '28P01':
+      case '57P03': {
+        statusCode = StatusCodes.SERVICE_UNAVAILABLE;
+        errorCode = 'DATABASE_CONNECTION_ERROR';
+        message = 'Unable to establish database storage connection.';
+        break;
+      }
+
       default: {
         statusCode = StatusCodes.BAD_REQUEST;
-        errorCode = `DATABASE_ERROR_${err.code}`;
-        message = 'A database constraint violation occurred.';
-        details = env.NODE_ENV === 'development' ? { prismaMeta: err.meta } : null;
+        errorCode = `DATABASE_ERROR_${dbErr.code || 'QUERY_FAILED'}`;
+        message = 'A database operation error occurred.';
         break;
       }
     }
-  } else if (err instanceof Prisma.PrismaClientValidationError) {
-    statusCode = StatusCodes.BAD_REQUEST;
-    errorCode = 'DATABASE_VALIDATION_ERROR';
-    message = 'Invalid query parameters or structural schema mismatch passed to database client.';
-  } else if (err instanceof Prisma.PrismaClientInitializationError) {
-    statusCode = StatusCodes.SERVICE_UNAVAILABLE;
-    errorCode = 'DATABASE_CONNECTION_FAILED';
-    message = 'Unable to establish connection to primary database storage.';
   }
 
   // -------------------------------------------------------------------
-  // 4. Baileys / Boom HTTP Errors (WhatsApp Web Socket)
+  // 4. Baileys / Boom HTTP Socket Errors (WhatsApp Integration)
   // -------------------------------------------------------------------
   else if ('isBoom' in err && (err as Boom).isBoom) {
     const boomErr = err as Boom;
     const rawStatusCode = boomErr.output?.statusCode;
     statusCode = resolveHttpStatusCode(rawStatusCode, StatusCodes.INTERNAL_SERVER_ERROR);
     errorCode = `BAILEYS_SOCKET_ERROR_${statusCode}`;
-    message = boomErr.message || 'WhatsApp socket operation failed';
+    message = boomErr.message || 'WhatsApp socket connection operation failed.';
     details = boomErr.output?.payload ?? null;
   }
 
   // -------------------------------------------------------------------
-  // 5. Express Malformed JSON Body Parsing Errors
+  // 5. Express JSON Body Parsing Syntax Errors
   // -------------------------------------------------------------------
   else if ('type' in err && (err as { type: string }).type === 'entity.parse.failed') {
     statusCode = StatusCodes.BAD_REQUEST;
-    errorCode = 'INVALID_JSON_BODY';
-    message = 'Malformed JSON payload received in request body. Please verify JSON syntax.';
+    errorCode = 'INVALID_JSON_PAYLOAD';
+    message = 'Malformed JSON body syntax received. Please verify body formatting.';
   }
 
-  // -------------------------------------------------------------------
-  // 6. Native Database Driver Errors (e.g. Postgres / pg)
-  // -------------------------------------------------------------------
-  else if ('code' in err && typeof (err as { code: unknown }).code === 'string') {
-    const pgCode = (err as { code: string }).code;
-    if (pgCode === '23505') {
-      statusCode = StatusCodes.CONFLICT;
-      errorCode = 'PG_UNIQUE_VIOLATION';
-      message = 'Duplicate key value violates unique constraint.';
-    } else if (pgCode === '28P01') {
-      statusCode = StatusCodes.SERVICE_UNAVAILABLE;
-      errorCode = 'PG_AUTHENTICATION_FAILED';
-      message = 'Database authentication failure.';
-    }
-  }
-
-  // Log error details internally to console
+  // Log error execution internally to server logs
   logErrorDetails(err, req, errorCode, statusCode);
 
-  // Sanitize sensitive values from response
+  // Deeply sanitize sensitive values
   const safeDetails = sanitizeSensitiveData(details);
 
+  // Strict Security Policy: NEVER send stack traces in Production environment
   const errorEnvelopeDetails =
     env.NODE_ENV === 'development'
       ? {
@@ -293,6 +313,6 @@ export const globalErrorHandler: ErrorRequestHandler = (
         }
       : safeDetails;
 
-  // Dispatch standardized JSON API response with strict HttpStatusCode type
+  // Dispatch uniform JSON API response
   ApiResponse.error(res, message, statusCode, errorCode, errorEnvelopeDetails);
 };

@@ -1,16 +1,15 @@
-// src/types/express.d.ts
-import { UserRole } from '@prisma/client';
+import type { AuthSource } from '../middlewares/auth.middleware.js';
+import type { AuthUser, OrgContext } from '../services/auth-session.service.js';
 
 declare global {
   namespace Express {
     interface Request {
-      user?: {
-        id: string;
-        email: string;
-        role: UserRole;
-        organizationId: string;
-      };
-      tenantId?: string;
+      user?: AuthUser;
+      org?: OrgContext;
+      organizationId?: string;
+      authSource?: AuthSource;
     }
   }
 }
+
+export {};

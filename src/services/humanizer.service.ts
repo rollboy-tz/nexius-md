@@ -1,68 +1,141 @@
-// src/services/humanizer.service.ts
+// path: src/services/humanizer.service.ts
+
 import type { WASocket } from '@whiskeysockets/baileys';
 
+/**
+ * Human-like timing. Two ideas matter more than any single number:
+ *
+ *  1. NO FIXED PATTERNS. A constant 3.2 s typing time on every message is easier to detect than a
+ *     fast one. Every delay here is drawn from a distribution, so no two sends look alike.
+ *  2. Different jobs, different habits. Typing a reply, pasting a prepared announcement, and glancing
+ *     at someone's status are not the same behaviour, and are not timed the same way.
+ *
+ * Note: this lowers risk, it does not remove it. Volume, who you message and how they react
+ * (reports, blocks) matter far more. See outbound-policy.service.ts.
+ */
+
+const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
+
 export class HumanizerService {
-  /**
-   * Generates a random delay between min and max milliseconds.
-   */
-  static getRandomDelay(minMs: number, maxMs: number): number {
-    return Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+  /** Replaceable in tests so timing can be made deterministic. */
+  public static random: () => number = Math.random;
+
+  /** Uniform integer in [min, max]. */
+  public static between(min: number, max: number): number {
+    return Math.floor(this.random() * (max - min + 1)) + min;
+  }
+
+  /** base ± fraction. jitter(1000, 0.2) is somewhere in 800..1200. */
+  public static jitter(base: number, fraction = 0.2): number {
+    return Math.round(base * (1 + (this.random() * 2 - 1) * fraction));
+  }
+
+  /** Bell-shaped random number (Box-Muller). */
+  private static gaussian(mean: number, standardDeviation: number): number {
+    const u = Math.max(this.random(), Number.EPSILON);
+    const v = this.random();
+    return mean + standardDeviation * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+
+  /** Mostly near the median, with an occasional long tail. How real waiting times look. */
+  private static logNormal(median: number, sigma: number): number {
+    return median * Math.exp(this.gaussian(0, sigma));
+  }
+
+  public static shouldAct(probability: number): boolean {
+    return this.random() < clamp(probability, 0, 1);
+  }
+
+  public static sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /* -------------------------------- timings -------------------------------- */
+
+  /** Time to read what the other person wrote: about 3 to 4 words a second, never instant. */
+  public static calculateReadingDelay(incomingText = ''): number {
+    const words = incomingText.trim() === '' ? 0 : incomingText.trim().split(/\s+/).length;
+    const base = words === 0 ? this.between(900, 2200) : (words / 3.5) * 1000;
+    return Math.round(clamp(this.jitter(base, 0.3), 1200, 9000));
   }
 
   /**
-   * Calculates time required for a human to READ an incoming message.
-   * Average reading speed: ~200-250 words per minute (~3-4 words per second).
-   *
-   * @param {string} incomingText - The text received from client.
-   * @returns {number} Delay in milliseconds (Capped between 1.2s to 6s).
+   * Time to compose the message.
+   *  - typed by hand: about 150 to 250 ms per character, with natural variation
+   *  - pasted (a prepared announcement): a short pause, because nobody types a template out
    */
-  static calculateReadingDelay(incomingText: string = ''): number {
-    if (!incomingText || incomingText.trim() === '') {
-      return this.getRandomDelay(1000, 2000);
-    }
-    const words = incomingText.trim().split(/\s+/).length;
-    const readingTimeMs = Math.floor((words / 3.5) * 1000);
-    return Math.min(Math.max(readingTimeMs, 1200), 6000);
+  public static calculateTypingDuration(text: string, pasted = false): number {
+    if (pasted) return this.between(1200, 3500);
+
+    const perCharacter = this.logNormal(170, 0.25);
+    return Math.round(clamp(900 + text.length * perCharacter, 1800, 14_000));
+  }
+
+  /** A short beat between "stop typing" and the send button. */
+  public static preSendPause(): number {
+    return this.between(350, 1100);
   }
 
   /**
-   * Calculates typing duration dynamically based on output character count.
+   * Gap before the next message goes out from the same number. Mostly short, sometimes a real
+   * break, like a person who gets distracted. Used by the policy after every send.
    */
-  static calculateTypingDuration(text: string): number {
-    const chars = text.length;
-    const calculatedMs = 1500 + chars * 45;
-    return Math.min(Math.max(calculatedMs, 2000), 8000);
+  public static gapBetweenMessages(isGroup: boolean): number {
+    const [min, max] = isGroup ? [12_000, 38_000] : [7_000, 24_000];
+    return this.between(min, max);
+  }
+
+  public static breakDuration(): number {
+    return this.between(90_000, 360_000);
   }
 
   /**
-   * Simulates dynamic human reading pause followed by typing status.
+   * How long after someone posts a status before we look at it: from a couple of minutes up to hours,
+   * clustered toward the shorter end but with a long tail. Not "instantly", and not predictable.
    */
-  static async simulateHumanTyping(
+  public static statusViewDelayMs(minMinutes: number, maxMinutes: number): number {
+    const minMs = minMinutes * 60_000;
+    const maxMs = Math.max(maxMinutes * 60_000, minMs + 60_000);
+    const median = minMs + (maxMs - minMs) * 0.25;
+    return Math.round(clamp(this.logNormal(median, 0.9), minMs, maxMs));
+  }
+
+  /** How long to wait before marking a chat as read (blue ticks), longer for groups. */
+  public static readReceiptDelayMs(isGroup: boolean): number {
+    return isGroup ? this.between(30_000, 600_000) : this.between(4_000, 75_000);
+  }
+
+  /** Whether to mark a chat as read at all. People do not read everything. */
+  public static shouldSendReadReceipt(isGroup: boolean): boolean {
+    return this.shouldAct(isGroup ? 0.4 : 0.85);
+  }
+
+  /* ------------------------------ presence ------------------------------ */
+
+  /**
+   * Shows "typing…" for a believable time, then stops. Presence is cosmetic: a failure here must
+   * never block or fail the message, so errors are swallowed.
+   */
+  public static async simulateHumanTyping(
     sock: WASocket,
     jid: string,
-    outgoingText: string = '',
-    incomingText: string = ''
+    outgoingText: string,
+    options: { incomingText?: string | undefined; pasted?: boolean | undefined } = {},
   ): Promise<void> {
     try {
-      // 1. Reading Time (Muda wa kusoma ujumbe wa mteja)
-      const readingDelay = this.calculateReadingDelay(incomingText);
-      await new Promise((resolve) => setTimeout(resolve, readingDelay));
+      // Reading time exists only when there is something to react to (a reply).
+      if (options.incomingText !== undefined) {
+        await this.sleep(this.calculateReadingDelay(options.incomingText));
+      }
 
-      // 2. State: Composing (typing...)
+      await sock.presenceSubscribe(jid);
+      await this.sleep(this.between(300, 800));
       await sock.sendPresenceUpdate('composing', jid);
-
-      // 3. Typing Duration (Muda wa kuandika jibu)
-      const typingDuration = this.calculateTypingDuration(outgoingText);
-      await new Promise((resolve) => setTimeout(resolve, typingDuration));
-
-      // 4. State: Paused
+      await this.sleep(this.calculateTypingDuration(outgoingText, options.pasted === true));
       await sock.sendPresenceUpdate('paused', jid);
-
-      // 5. Short pause before hit send button
-      const preSendPause = this.getRandomDelay(400, 1000);
-      await new Promise((resolve) => setTimeout(resolve, preSendPause));
+      await this.sleep(this.preSendPause());
     } catch (error) {
-      console.warn(`⚠️ [Humanizer] Failed to simulate presence for ${jid}:`, error);
+      console.warn(`⚠️ [Humanizer] Presence simulation skipped: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
   }
 }

@@ -6,6 +6,7 @@ import makeWASocket, {
   type WASocket,
   type UserFacingSocketConfig,
 } from '@whiskeysockets/baileys';
+import { appEvents } from './session-events.js';
 import { Boom } from '@hapi/boom';
 import P from 'pino';
 import fs from 'node:fs/promises';
@@ -408,6 +409,13 @@ function emitSessionStatus(sessionId: string, payload: SessionStatusPayload): vo
     sessionId,
     ...payload,
     timestamp: new Date().toISOString(),
+  });
+
+  appEvents.emitChannelStatus(sessionId, {
+    state: payload.state,
+    message: payload.message,
+    phoneNumber: payload.phoneNumber,
+    profile: payload.profile ?? null,
   });
 }
 

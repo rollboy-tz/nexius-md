@@ -1,7 +1,7 @@
 import makeWASocket, { useMultiFileAuthState, fetchLatestBaileysVersion } from "@whiskeysockets/baileys";
 import P from "pino";
 import readline from "readline";
-import startGroupHandler from "./files/groups.js";
+//import startGroupHandler from "./files/groups.js";
 import startInboxHandler from "./files/inbox.js"; // ⚡ import handler
 import { autoSyncGroups } from "./files/autoSyncGroup.js";
 import { autoSyncNewslater } from "./files/autoSyncChannel.js";
@@ -54,7 +54,7 @@ async function startBot() {
 
             if(!handlerStarted) {
                 startInboxHandler(sock); // ⚡ start inbox handler once
-                startGroupHandler(sock); // ⚡ start group handler once
+                //startGroupHandler(sock); // ⚡ start group handler once
                 autoSyncGroups(sock); // Sync groups automatcally
                 autoSyncNewslater(sock); //Sync channels automatically
                 handlerStarted = true;

@@ -1,3 +1,5 @@
+// path: src/utils/api.error.ts
+
 import { StatusCodes, type HttpStatusCode } from '../constants/status-codes.js';
 
 /**
